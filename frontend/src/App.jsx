@@ -15,6 +15,7 @@ import InventoryPage    from './pages/InventoryPage';
 import AdminOrdersPage  from './pages/AdminOrdersPage';
 import AdminStudentsPage from './pages/AdminStudentsPage';
 import MetricsPage      from './pages/MetricsPage';
+import AdminSystemPage from './pages/AdminSystemPage';
 
 export default function App() {
   return (
@@ -40,6 +41,8 @@ export default function App() {
             <Route path="/admin/orders"     element={<ProtectedRoute requiredRole="admin"><AdminOrdersPage /></ProtectedRoute>} />
             <Route path="/admin/students"   element={<ProtectedRoute requiredRole="admin"><AdminStudentsPage /></ProtectedRoute>} />
             <Route path="/admin/metrics"    element={<ProtectedRoute requiredRole="admin"><MetricsPage /></ProtectedRoute>} />
+<Route path='/admin/system'
+  element={<ProtectedRoute requiredRole='admin'><AdminSystemPage /></ProtectedRoute>} />
 
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="*" element={<Navigate to="/login" replace />} />

@@ -48,4 +48,9 @@ jobs:
       - run: docker build ./services/kitchen-queue
         name: Build kitchen-queue
       - run: docker build ./services/notification-hub
+<<<<<<< HEAD
         name: Build notification-hub
+=======
+        name: Build notification-hub
+
+>>>>>>> 31229a3 (docker: add dockerfiles, nginx.conf, and docker-compose.yml)

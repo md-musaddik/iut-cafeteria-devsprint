@@ -7,6 +7,7 @@ const nav = [
   { path: '/admin/orders',    icon: '📋', label: 'Orders' },
   { path: '/admin/students',  icon: '👥', label: 'Students' },
   { path: '/admin/metrics',   icon: '📈', label: 'Metrics' },
+{ path: '/admin/system',    icon: '🖥️', label: 'System Health' },
 ];
 
 export default function AdminLayout({ children }) {
