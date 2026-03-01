@@ -1,0 +1,98 @@
+
+services:
+
+  # ── MongoDB ──────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    container_name: iut-mongo
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db     # data survives docker compose down
+    healthcheck:
+      test: ['CMD','mongosh','--eval','db.adminCommand("ping")']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Identity Provider ─────────────────────────────────────────────────────
+  identity-provider:
+    build: ./services/identity-provider
+    container_name: iut-identity
+    ports:
+      - '3001:3001'
+    environment:
+      - PORT=3001
+      - MONGO_URI=mongodb://mongo:27017/iut_cafeteria
+      - JWT_SECRET=devsprint2026supersecretjwtkey
+    depends_on:
+      mongo:
+        condition: service_healthy   # waits for MongoDB to be ready
+    restart: unless-stopped          # auto-restarts if it crashes
+
+  # ── Stock Service ─────────────────────────────────────────────────────────
+  stock-service:
+    build: ./services/stock-service
+    container_name: iut-stock
+    ports:
+      - '3003:3003'
+    environment:
+      - PORT=3003
+      - MONGO_URI=mongodb://mongo:27017/iut_cafeteria
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Notification Hub (must start before kitchen-queue) ────────────────────
+  notification-hub:
+    build: ./services/notification-hub
+    container_name: iut-notif
+    ports:
+      - '3005:3005'
+    restart: unless-stopped
+
+  # ── Kitchen Queue ─────────────────────────────────────────────────────────
+  kitchen-queue:
+    build: ./services/kitchen-queue
+    container_name: iut-kitchen
+    ports:
+      - '3004:3004'
+    environment:
+      - PORT=3004
+      - NOTIFY_URL=http://notification-hub:3005
+    depends_on:
+      - notification-hub
+    restart: unless-stopped
+
+  # ── Order Gateway ─────────────────────────────────────────────────────────
+  order-gateway:
+    build: ./services/order-gateway
+    container_name: iut-gateway
+    ports:
+      - '3002:3002'
+    environment:
+      - PORT=3002
+      - AUTH_URL=http://identity-provider:3001
+      - STOCK_URL=http://stock-service:3003
+      - KITCHEN_URL=http://kitchen-queue:3004
+    depends_on:
+      - identity-provider
+      - stock-service
+      - kitchen-queue
+    restart: unless-stopped
+
+  # ── Frontend ──────────────────────────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    container_name: iut-frontend
+    ports:
+      - '80:80'
+    depends_on:
+      - order-gateway
+      - notification-hub
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
