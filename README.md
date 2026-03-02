@@ -54,6 +54,7 @@ Open http://localhost after all services start (~2 minutes)
 \- Claude Ai — architecture guidance, code generation, debugging
 
 \- ChatGPT - Idea generation, requirement analysis, Debugging
+\- Gemini - Document Creation
 
 
 🔄 The Lifecycle of an Order
@@ -66,6 +67,8 @@ Background Queueing: The Gateway sends the confirmed order ID to the Kitchen Que
 Instant Client Response: The Kitchen Queue immediately responds to the Gateway, which forwards a 201 Created back to the student. This keeps the client-side wait time under 2 seconds.
 Async Cooking Simulation: The Kitchen Queue processes the order through multiple stages ("Stock Verified", "In Kitchen", "Ready") using simulated delays.
 Real-Time Push Notification: At each stage, the Kitchen calls the Notification Hub, which emits an orderUpdate event via Socket.io directly to the student's isolated room.
+
+
 ⚙️ DevOps & Deployment
 Dockerized Environment: Every service and the frontend includes a lightweight Dockerfile (using Alpine Linux images to reduce footprint). The entire stack is orchestrated via docker-compose.yml.
 CI/CD Pipeline: A GitHub Actions workflow (ci.yml) is triggered on every push to the main branch. It spins up an Ubuntu runner, installs dependencies, and runs Jest unit tests covering stock deduction and validation logic. The build intentionally fails if any test does not pass.
