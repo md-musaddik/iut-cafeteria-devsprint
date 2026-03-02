@@ -75,16 +75,30 @@ app.post('/orders', authenticate, async (req, res) => {
     const cached = getCache(ck);
     if (cached !== null && cached <= 0)
       return res.status(409).json({message:'Out of stock (cached)'});
+
+    // stockRes contains the real MongoDB _id of the order
     const stockRes = await axios.post(`${STOCK_URL}/deduct`,
       { mealCategory, selectedOption, userId:req.user.id,
         price:req.body.price, idempotencyKey });
     setCache(ck, stockRes.data.remainingStock, 30);
-    const kitchenRes = await axios.post(`${KITCHEN_URL}/enqueue`,
-      { orderId:stockRes.data.orderId, mealCategory, selectedOption, userId:req.user.id });
+
+    // Send to kitchen queue (non-blocking for response time)
+    // Kitchen uses stockRes.data.orderId which IS the MongoDB _id
+    axios.post(`${KITCHEN_URL}/enqueue`,
+      { orderId:stockRes.data.orderId, mealCategory, selectedOption, userId:req.user.id })
+      .catch(e => console.warn('Kitchen enqueue failed:', e.message));
+
     metrics.totalOrders++;
     metrics.responseTimes.push(Date.now()-start);
     if (metrics.responseTimes.length>100) metrics.responseTimes.shift();
-    res.status(201).json(kitchenRes.data);
+
+    // Return the MongoDB _id as _id so frontend navigate(`/order/${res.data._id}`) works
+    res.status(201).json({
+      _id: stockRes.data.orderId,
+      orderId: stockRes.data.orderId,
+      status: 'Placed',
+      message: 'Order placed! Preparing your meal.'
+    });
   } catch(e) {
     metrics.failedOrders++;
     res.status(e.response?.status||500).json({message:e.response?.data?.message||e.message});
@@ -118,10 +132,8 @@ app.put('/meals/:id/stock', authenticate, async (req,res) => {
 });
 
 // ── Order routes ──────────────────────────────────────────────────────────
-// IMPORTANT: specific routes MUST come before wildcard /orders/:id
-// otherwise "admin", "my" would be caught by :id
+// IMPORTANT: specific routes MUST come before /orders/:id wildcard
 
-// Admin order routes — all before /orders/:id
 app.get('/orders/admin/all', authenticate, async (req,res) => {
   try {
     const q = req.query.status ? `?status=${req.query.status}&limit=25` : '?limit=25';
@@ -147,8 +159,6 @@ app.post('/orders/admin/:id/cancel', authenticate, async (req,res) => {
     res.json(r.data);
   } catch(e) { res.status(e.response?.status||500).json(e.response?.data||{message:e.message}); }
 });
-
-// Student order list
 app.get('/orders/my', authenticate, async (req,res) => {
   try { const r=await axios.get(`${STOCK_URL}/orders?userId=${req.user.id}`); res.json(r.data); }
   catch(e) { res.status(500).json({message:e.message}); }
@@ -185,7 +195,6 @@ app.get('/auth/me', authenticate, async (req,res) => {
 });
 
 // ── Admin routes ──────────────────────────────────────────────────────────
-
 // /admin/recharge MUST be above the /admin wildcard
 app.post('/admin/recharge', authenticate, async (req,res) => {
   try {

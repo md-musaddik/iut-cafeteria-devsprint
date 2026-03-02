@@ -1,7 +1,8 @@
+const { v4: uuidv4 } = require('uuid');
+const axios = require('axios');
 require('dotenv').config();
 const express  = require('express');
 const mongoose = require('mongoose');
-const { v4: uuidv4 } = require('uuid');
 const app = express(); app.use(express.json());
 
 // ── Schemas ───────────────────────────────────────────────────────────────
@@ -26,8 +27,8 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User',UserSchema);
 
-// ── POST /deduct — atomically deduct stock ────────────────────────────────
-app.post('/deduct', async (req,res) => {
+// ── POST /deduct — atomically deduct stock AND balance ────────────────────
+/*app.post('/deduct', async (req,res) => {
   try {
     const {mealCategory,selectedOption,userId,price,idempotencyKey} = req.body;
     // Idempotency: same key = already processed = return same result
@@ -39,6 +40,13 @@ app.post('/deduct', async (req,res) => {
     if (optIdx===-1) return res.status(400).json({message:'Option not found'});
     const opt = meal.options[optIdx];
     if (opt.stock<=0) return res.status(409).json({message:'Out of stock'});
+
+    // Check balance BEFORE deducting stock
+    const finalPrice = price || meal.price;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({message:'User not found'});
+    if (user.balance < finalPrice) return res.status(402).json({message:'Insufficient balance'});
+
     // OPTIMISTIC LOCKING: update only succeeds if version still matches
     const updated = await Meal.findOneAndUpdate(
       {_id:meal._id,'options._id':opt._id,'options.stock':{$gt:0},'options.version':opt.version},
@@ -46,13 +54,46 @@ app.post('/deduct', async (req,res) => {
       {new:true}
     );
     if (!updated) return res.status(409).json({message:'Stock conflict — please retry'});
+
+    // Deduct balance from user after stock is secured
+    await User.findByIdAndUpdate(userId, {$inc:{balance:-finalPrice}});
+
     const txId = `TXN-${uuidv4().substring(0,8).toUpperCase()}`;
     const order = await Order.create({
       userId, mealCategory, selectedOption,
-      price: price||meal.price, paymentStatus:'Success',
+      price: finalPrice, paymentStatus:'Success',
       transactionId:txId, idempotencyKey
     });
     res.status(201).json({orderId:order._id, remainingStock:updated.options[optIdx].stock});
+  } catch(e) { res.status(500).json({message:e.message}); }
+});*/
+app.post('/deduct', async (req,res) => {
+  try {
+    const {mealCategory,selectedOption,userId,price,idempotencyKey} = req.body;
+    const existing = await Order.findOne({idempotencyKey});
+    if (existing) return res.json({orderId:existing._id,remainingStock:0,idempotent:true});
+    const meal = await Meal.findOne({category:mealCategory,isAvailable:true});
+    if (!meal) return res.status(404).json({message:'Meal not found'});
+    const optIdx = meal.options.findIndex(o=>o.name===selectedOption);
+    if (optIdx===-1) return res.status(400).json({message:'Option not found'});
+    const opt = meal.options[optIdx];
+    if (opt.stock<=0) return res.status(409).json({message:'Out of stock'});
+    const updated = await Meal.findOneAndUpdate(
+      {_id:meal._id,'options._id':opt._id,'options.stock':{$gt:0},'options.version':opt.version},
+      {$inc:{'options.$.stock':-1},$set:{'options.$.version':opt.version+1}},
+      {new:true}
+    );
+    if (!updated) return res.status(409).json({message:'Stock conflict — please retry'});
+    // Deduct balance — userId exists in this DB because students are created here by admin
+    const finalPrice = price || meal.price;
+    await User.findByIdAndUpdate(userId, {$inc:{balance:-finalPrice}});
+    const txId = `TXN-${uuidv4().substring(0,8).toUpperCase()}`;
+    const order = await Order.create({
+      userId, mealCategory, selectedOption,
+      price: finalPrice, paymentStatus:'Success',
+      transactionId:txId, idempotencyKey
+    });
+    res.status(201).json({orderId:order._id, remainingStock:updated.options[optIdx].stack});
   } catch(e) { res.status(500).json({message:e.message}); }
 });
 
@@ -61,7 +102,6 @@ app.get('/meals', async (_,res) => {
   try { res.json(await Meal.find({isAvailable:true})); }
   catch(e) { res.status(500).json({message:e.message}); }
 });
-
 app.get('/meals/:category', async (req,res) => {
   try {
     const meal = await Meal.findOne({category:req.params.category, isAvailable:true});
@@ -69,7 +109,6 @@ app.get('/meals/:category', async (req,res) => {
     res.json(meal);
   } catch(e) { res.status(500).json({message:e.message}); }
 });
-
 app.put('/meals/:id/stock', async (req,res) => {
   try {
     const m = await Meal.findById(req.params.id);
@@ -108,7 +147,12 @@ app.put('/orders/admin/:id/status', async (req,res) => {
     const o = await Order.findById(req.params.id);
     o.status = req.body.status;
     if (req.body.status==='Picked Up') o.pickedUpAt = new Date();
-    await o.save(); res.json(o);
+    await o.save();
+    // Notify the student's browser in real time via notification-hub
+    const NOTIFY_URL = process.env.NOTIFY_URL || 'http://notification-hub:3005';
+    axios.post(`${NOTIFY_URL}/notify`, {orderId: o._id, status: o.status})
+      .catch(e => console.warn('Notify failed:', e.message));
+    res.json(o);
   } catch(e) { res.status(500).json({message:e.message}); }
 });
 app.post('/orders/admin/:id/cancel', async (req,res) => {
@@ -187,8 +231,6 @@ app.post('/admin/recharge', async (req,res) => {
 });
 
 // ── GET /users/:id — called by order-gateway for /auth/me ─────────────────
-// Returns fresh user data including current balance
-// This is the KEY route that makes balance work in the student dashboard
 app.get('/users/:id', async (req,res) => {
   try {
     const u = await User.findById(req.params.id).select('-password');
