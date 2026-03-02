@@ -1,8 +1,7 @@
+
 import { useEffect, useState } from 'react';
 import AdminLayout from '../layouts/AdminLayout';
 
-// All URLs go through nginx → gateway proxy (/api/ → gateway:3002/)
-// The browser NEVER calls other services directly — that causes CORS errors
 const SERVICES = [
   { name:'Identity Provider', key:'identity', icon:'🔐',
     healthUrl:  '/api/svc/identity/health',
@@ -26,6 +25,17 @@ const SERVICES = [
     container:  'iut-notif' },
 ];
 
+// A service is UP only if fetch succeeded AND JSON says status === 'ok'
+const isServiceUp = (healthData) => {
+  if (!healthData) return false;
+  if (healthData.fetchFailed) return false;
+  if (!healthData.data) return false;
+  const s = healthData.data.status;
+  if (s === 'down' || s === 'degraded') return false;
+  if (s === 'ok' || s === 'up') return true;
+  return false;
+};
+
 export default function AdminSystemPage() {
   const [health,    setHealth]    = useState({});
   const [metrics,   setMetrics]   = useState({});
@@ -35,15 +45,19 @@ export default function AdminSystemPage() {
   const fetchAll = async () => {
     const h = {}, m = {};
     await Promise.all(SERVICES.map(async svc => {
+      // Health — check HTTP status AND JSON content
       try {
-        const [hr, mr] = await Promise.all([
-          fetch(svc.healthUrl).then(r  => r.json()),
-          fetch(svc.metricsUrl).then(r => r.json()),
-        ]);
-        h[svc.key] = { status: 'up', data: hr };
-        m[svc.key] = mr;
+        const resp = await fetch(svc.healthUrl);
+        const data = await resp.json();
+        h[svc.key] = { fetchFailed: false, httpStatus: resp.status, data };
       } catch {
-        h[svc.key] = { status: 'down' };
+        h[svc.key] = { fetchFailed: true, data: null };
+      }
+      // Metrics
+      try {
+        const resp = await fetch(svc.metricsUrl);
+        m[svc.key] = resp.ok ? await resp.json() : null;
+      } catch {
         m[svc.key] = null;
       }
     }));
@@ -61,11 +75,13 @@ export default function AdminSystemPage() {
 
   const chaosKill = svc => alert(
     `CHAOS TOGGLE — Kill: ${svc.name}\n\n` +
-    `Run in terminal:\n  docker stop ${svc.container}\n\n` +
+    `Run in PowerShell:\n  docker stop ${svc.container}\n\n` +
     `To restart:\n  docker start ${svc.container}`
   );
 
   if (loading) return <AdminLayout><div className='spinner'/></AdminLayout>;
+
+  const allUp = SERVICES.every(svc => isServiceUp(health[svc.key]));
 
   return (
     <AdminLayout>
@@ -74,49 +90,117 @@ export default function AdminSystemPage() {
         <p>All microservices · auto-refreshes every 5 seconds</p>
       </div>
 
+      {/* Overall status banner */}
+      <div style={{
+        padding:'1rem 1.5rem', borderRadius:12, marginBottom:'1.5rem',
+        fontWeight:700, fontSize:'1rem',
+        background: allUp ? '#f0fdf4' : '#fef2f2',
+        border: `2px solid ${allUp ? '#10b981' : '#ef4444'}`,
+        color: allUp ? '#166534' : '#991b1b',
+      }}>
+        {allUp
+          ? '✅ All systems operational'
+          : '⚠️ One or more services are offline — see below'}
+      </div>
+
       {perfAlert && (
-        <div className='alert alert-error' style={{fontWeight:700}}>
+        <div className='alert alert-error' style={{fontWeight:700, marginBottom:'1rem'}}>
           ⚠️ PERFORMANCE ALERT: Gateway average response time exceeds 1 second!
         </div>
       )}
 
       {/* Health Grid */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',
-                   gap:'1rem',marginBottom:'2rem'}}>
+      <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(175px,1fr))',
+                   gap:'1rem', marginBottom:'2rem'}}>
         {SERVICES.map(svc => {
-          const up = health[svc.key]?.status === 'up';
-          const m  = metrics[svc.key];
+          const up = isServiceUp(health[svc.key]);
+          const mx = metrics[svc.key];
           return (
             <div key={svc.key} style={{
               padding:'1.5rem', borderRadius:14, textAlign:'center',
               background: up ? '#f0fdf4' : '#fef2f2',
               border: `2px solid ${up ? '#10b981' : '#ef4444'}`,
-              transition: 'all 0.3s'
+              transition: 'all 0.4s'
             }}>
               <div style={{fontSize:'2rem'}}>{svc.icon}</div>
               <div style={{fontSize:'1.6rem', margin:'0.25rem 0'}}>{up ? '🟢' : '🔴'}</div>
               <div style={{fontWeight:700, fontSize:'0.85rem'}}>{svc.name}</div>
-              <div style={{fontSize:'0.78rem', color: up?'#166534':'#991b1b', marginTop:'0.2rem'}}>
-                {up ? 'Healthy' : 'OFFLINE'}
+              <div style={{
+                fontSize:'0.78rem', fontWeight:700, marginTop:'0.2rem',
+                color: up ? '#166534' : '#991b1b',
+              }}>
+                {up ? 'Healthy' : '⚠️ OFFLINE'}
               </div>
-              {m && (
-                <div style={{fontSize:'0.72rem', color:'#6b7280', marginTop:'0.3rem'}}>
-                  {Math.floor(m.uptime || 0)}s uptime
+              {mx && up && (
+                <div style={{fontSize:'0.72rem', color:'#6b7280', marginTop:'0.25rem'}}>
+                  ⏱ {Math.floor(mx.uptime || 0)}s uptime
                 </div>
               )}
               <button onClick={() => chaosKill(svc)} style={{
-                marginTop:'0.7rem', padding:'0.3rem 0.7rem', borderRadius:6,
-                background:'#ef4444', color:'white', border:'none',
-                cursor:'pointer', fontSize:'0.75rem', fontWeight:700
+                marginTop:'0.75rem', padding:'0.3rem 0.75rem', borderRadius:6,
+                background: up ? '#ef4444' : '#6b7280',
+                color:'white', border:'none', cursor:'pointer',
+                fontSize:'0.75rem', fontWeight:700,
               }}>
-                💥 Kill
+                {up ? '💥 Kill' : '💀 Down'}
               </button>
             </div>
           );
         })}
       </div>
 
-      {/* Metrics Table */}
+      {/* Fault Tolerance Table */}
+      <div className='card' style={{padding:'1.5rem', marginBottom:'1.5rem'}}>
+        <h3 style={{fontWeight:700, marginBottom:'1rem'}}>⚡ Fault Tolerance — What Breaks When a Service Dies</h3>
+        <div className='table-wrap'>
+          <table>
+            <thead>
+              <tr>
+                <th>Service killed</th>
+                <th>What stops working</th>
+                <th>What keeps working (fault tolerance)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                [
+                  '🔐 Identity Provider',
+                  'Login for new sessions, token verification',
+                  'Already logged-in users retain their session'
+                ],
+                [
+                  '🚪 Order Gateway',
+                  'Everything — it is the single entry point',
+                  'Nothing — gateway is the critical path'
+                ],
+                [
+                  '📦 Stock Service',
+                  'Placing orders, balance updates, student data',
+                  'Nothing — stock is critical for orders'
+                ],
+                [
+                  '👨‍🍳 Kitchen Queue',
+                  'New orders cannot be queued',
+                  'Existing orders still visible to admin'
+                ],
+                [
+                  '🔔 Notification Hub',
+                  'Live status updates in student browser',
+                  'Orders still process normally — admin can still change status — students see updates on refresh'
+                ],
+              ].map(([svc, stops, keeps]) => (
+                <tr key={svc}>
+                  <td style={{fontWeight:600, whiteSpace:'nowrap'}}>{svc}</td>
+                  <td style={{color:'#dc2626', fontSize:'0.88rem'}}>❌ {stops}</td>
+                  <td style={{color:'#16a34a', fontSize:'0.88rem'}}>✅ {keeps}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Live Metrics Table */}
       <div className='card' style={{padding:'1.5rem'}}>
         <h3 style={{fontWeight:700, marginBottom:'1rem'}}>📊 Live Metrics</h3>
         <div className='table-wrap'>
@@ -132,20 +216,25 @@ export default function AdminSystemPage() {
             </thead>
             <tbody>
               {SERVICES.map(svc => {
-                const up = health[svc.key]?.status === 'up';
-                const m  = metrics[svc.key];
+                const up = isServiceUp(health[svc.key]);
+                const mx = metrics[svc.key];
                 return (
                   <tr key={svc.key}>
                     <td style={{fontWeight:600}}>{svc.icon} {svc.name}</td>
                     <td>
-                      <span className={`badge ${up ? 'badge-green' : 'badge-red'}`}>
-                        {up ? 'Online' : 'Offline'}
+                      <span style={{
+                        padding:'0.2rem 0.65rem', borderRadius:999,
+                        fontSize:'0.8rem', fontWeight:700,
+                        background: up ? '#dcfce7' : '#fee2e2',
+                        color:      up ? '#166534' : '#991b1b',
+                      }}>
+                        {up ? '🟢 Online' : '🔴 Offline'}
                       </span>
                     </td>
-                    <td>{m ? `${Math.floor(m.uptime)}s` : '—'}</td>
-                    <td>{m?.totalOrders ?? m?.totalDeductions ?? m?.processed ?? '—'}</td>
-                    <td style={{color: m?.avgResponseTimeMs > 1000 ? '#ef4444' : 'inherit'}}>
-                      {m?.avgResponseTimeMs ? `${m.avgResponseTimeMs}ms` : '—'}
+                    <td>{mx && up ? `${Math.floor(mx.uptime)}s` : '—'}</td>
+                    <td>{mx ? (mx.totalOrders ?? mx.processed ?? '—') : '—'}</td>
+                    <td style={{color: mx?.avgResponseTimeMs > 1000 ? '#ef4444' : 'inherit'}}>
+                      {mx?.avgResponseTimeMs ? `${mx.avgResponseTimeMs}ms` : '—'}
                     </td>
                   </tr>
                 );

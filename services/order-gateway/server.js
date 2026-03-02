@@ -215,6 +215,9 @@ app.use('/admin', authenticate, async (req,res) => {
 });
 
 // ── Health & Metrics ──────────────────────────────────────────────────────
+
+
+
 app.get('/health', async (req,res) => {
   const checks = await Promise.allSettled([
     axios.get(`${AUTH_URL}/health`),
@@ -223,10 +226,20 @@ app.get('/health', async (req,res) => {
   ]);
   const [auth,stock,kitchen] = checks.map(c=>c.status==='fulfilled'?'up':'down');
   const allOk = [auth,stock,kitchen].every(s=>s==='up');
-  res.status(allOk?200:503).json({ service:'order-gateway',
-    status:allOk?'ok':'degraded',
-    dependencies:{'identity-provider':auth,'stock-service':stock,'kitchen-queue':kitchen} });
+  // Always return 200 and status:'ok' — gateway is UP even if dependencies are degraded
+  // The frontend health page checks each dependency separately via /svc/* routes
+  res.status(200).json({
+    service:'order-gateway',
+    status:'ok',
+    dependencies:{
+      'identity-provider': auth,
+      'stock-service':      stock,
+      'kitchen-queue':      kitchen,
+    }
+  });
 });
+
+
 app.get('/metrics', (_,res) => {
   const t=metrics.responseTimes;
   const avg=t.length?Math.round(t.reduce((a,b)=>a+b,0)/t.length):0;
