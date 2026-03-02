@@ -9,8 +9,21 @@ let processed = 0;
 
 // If Notification Hub is down: log a warning and CONTINUE
 // This is fault tolerance — kitchen works even if notifications fail
+
+/*const notify = async (orderId, status) => {
+  orderStatus.set(String(orderId), status);
+  try { await axios.post(`${NOTIFY_URL}/notify`,{orderId,status}); }
+  catch { console.warn(`Notification Hub unreachable for order ${orderId}. Continuing.`); }
+};*/
+
+const STOCK_URL = process.env.STOCK_URL || 'http://stock-service:3003';
+
 const notify = async (orderId, status) => {
   orderStatus.set(String(orderId), status);
+  // Update status in MongoDB so page refresh shows correct status
+  axios.put(`${STOCK_URL}/orders/admin/${orderId}/status`, {status})
+    .catch(e => console.warn(`DB status update failed for ${orderId}:`, e.message));
+  // Push live update to student's browser via notification-hub
   try { await axios.post(`${NOTIFY_URL}/notify`,{orderId,status}); }
   catch { console.warn(`Notification Hub unreachable for order ${orderId}. Continuing.`); }
 };
