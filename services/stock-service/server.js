@@ -61,6 +61,15 @@ app.get('/meals', async (_,res) => {
   try { res.json(await Meal.find({isAvailable:true})); }
   catch(e) { res.status(500).json({message:e.message}); }
 });
+
+app.get('/meals/:category', async (req,res) => {
+  try {
+    const meal = await Meal.findOne({category:req.params.category, isAvailable:true});
+    if (!meal) return res.status(404).json({message:'Meal not found'});
+    res.json(meal);
+  } catch(e) { res.status(500).json({message:e.message}); }
+});
+
 app.put('/meals/:id/stock', async (req,res) => {
   try {
     const m = await Meal.findById(req.params.id);
@@ -121,7 +130,7 @@ app.get('/admin/students', async (req,res) => {
   try {
     const {search='',page=1,limit=12} = req.query;
     const q = {role:'student',isDeleted:false,
-...(search&&{$or:[{name:{$regex:search,$options:'i'}},
+      ...(search&&{$or:[{name:{$regex:search,$options:'i'}},
         {email:{$regex:search,$options:'i'}},{studentId:{$regex:search,$options:'i'}}]})};
     const students = await User.find(q).sort({createdAt:-1}).skip((page-1)*limit).limit(parseInt(limit));
     const total = await User.countDocuments(q);
@@ -170,10 +179,21 @@ app.get('/admin/metrics', async (_,res) => {
   } catch(e) { res.status(500).json({message:e.message}); }
 });
 app.post('/admin/recharge', async (req,res) => {
-try {
+  try {
     const {userId,amount} = req.body;
     const u = await User.findByIdAndUpdate(userId,{$inc:{balance:parseFloat(amount)}},{new:true});
     res.json({balance:u.balance});
+  } catch(e) { res.status(500).json({message:e.message}); }
+});
+
+// ── GET /users/:id — called by order-gateway for /auth/me ─────────────────
+// Returns fresh user data including current balance
+// This is the KEY route that makes balance work in the student dashboard
+app.get('/users/:id', async (req,res) => {
+  try {
+    const u = await User.findById(req.params.id).select('-password');
+    if (!u) return res.status(404).json({message:'User not found'});
+    res.json(u);
   } catch(e) { res.status(500).json({message:e.message}); }
 });
 
